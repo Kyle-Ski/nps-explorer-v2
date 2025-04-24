@@ -6,7 +6,9 @@
   "private": true,
   "scripts": {
     "start": "vite dev",
+    "start:mcp": "cd mcp-worker && wrangler dev --config wrangler.jsonc --port 8787",
     "deploy": "vite build && wrangler deploy",
+    "deploy:mcp": "cd mcp-worker && wrangler deploy --config wrangler.jsonc",
     "test": "vitest",
     "types": "wrangler types",
     "format": "prettier --write .",
