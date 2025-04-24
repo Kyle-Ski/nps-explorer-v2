@@ -37,7 +37,6 @@
 			"tag": "v1",
 			"new_sqlite_classes": [
 				"Chat",
-				"NpsMcpAgent"
 			]
 		}
 	],

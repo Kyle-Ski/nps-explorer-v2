@@ -27,21 +27,25 @@ interface McpMetadata {
   }>;
 }
 
+const isLocalDevelopment = () => {
+  // Check if we're running in a browser (Vite dev server)
+  if (typeof window !== 'undefined') {
+    return window.location.hostname === 'localhost';
+  }
+  // For server-side, assume we're in development if NODE_ENV is not production
+  return typeof process !== 'undefined' && process.env.NODE_ENV !== 'production';
+};
+
 // Get MCP URL from environment or use localhost as fallback
 // For Cloudflare, this would typically be an environment variable
 const getMcpBaseUrl = () => {
-  // In production (Cloudflare), this would come from environment variables
-  if (typeof process !== 'undefined' && process.env && process.env.MCP_URL) {
-    return process.env.MCP_URL;
+  if (isLocalDevelopment()) {
+    // Use local MCP server running at port 8787
+    return "http://localhost:8787/mcp";
+  } else {
+    // Use deployed MCP server in production
+    return "https://nps-mcp-server.skiroyjenkins.workers.dev/mcp";
   }
-
-  // If running in browser, check for window.__ENV__.MCP_URL
-  if (typeof window !== 'undefined' && window.__ENV__ && window.__ENV__.MCP_URL) {
-    return window.__ENV__.MCP_URL;
-  }
-
-  // Default for local development
-  return "http://localhost:5173/mcp";
 };
 
 // Basic MCP client using fetch with proper types
