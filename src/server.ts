@@ -9,18 +9,21 @@ import {
   streamText,
   type StreamTextOnFinishCallback,
 } from "ai";
-import { openai } from "@ai-sdk/openai";
 import { processToolCalls } from "./utils";
 import { tools, executions } from "./tools";
 import { AsyncLocalStorage } from "node:async_hooks";
-// import { env } from "cloudflare:workers";
+import { createAnthropic } from "@ai-sdk/anthropic";
 
-const model = openai("gpt-4o-2024-11-20");
-// Cloudflare AI Gateway
-// const openai = createOpenAI({
-//   apiKey: env.OPENAI_API_KEY,
-//   baseURL: env.GATEWAY_BASE_URL,
-// });
+// import { env } from "cloudflare:workers";
+export interface Env {
+  AI: Ai;
+  NpsMcpAgent: DurableObjectNamespace;
+  NPS_API_KEY: string;
+  RECGOV_API_KEY: string;
+  WEATHER_API_KEY: string;
+  ANTHROPIC_API_KEY: string;
+}
+
 
 // we use ALS to expose the agent context to the tools
 export const agentContext = new AsyncLocalStorage<Chat>();
@@ -32,46 +35,47 @@ export class Chat extends AIChatAgent<Env> {
    * Handles incoming chat messages and manages the response stream
    * @param onFinish - Callback function executed when streaming completes
    */
+  private _anthropic?: ReturnType<typeof createAnthropic>;
 
+  private getAnthropic() {
+    if (!this._anthropic) {
+      this._anthropic = createAnthropic({ apiKey: this.env.ANTHROPIC_API_KEY });
+    }
+    return this._anthropic;
+  }
   // biome-ignore lint/complexity/noBannedTypes: <explanation>
   async onChatMessage(onFinish: StreamTextOnFinishCallback<{}>) {
-    // Create a streaming response that handles both text and tool outputs
     return agentContext.run(this, async () => {
-      const dataStreamResponse = createDataStreamResponse({
+      return createDataStreamResponse({
         execute: async (dataStream) => {
-          // Process any pending tool calls from previous messages
-          // This handles human-in-the-loop confirmations for tools
-          const processedMessages = await processToolCalls({
+          // handle any pending tool interactions first
+          const processed = await processToolCalls({
             messages: this.messages,
             dataStream,
             tools,
             executions,
           });
 
-          // Stream the AI response using GPT-4
+          // choose your Claude model ID
+          const anthropic = this.getAnthropic();
+          const model = anthropic("claude-3-5-haiku-20241022");
+          // stream the response
           const result = streamText({
             model,
-            system: `You are a helpful assistant that can do various tasks... 
+            system: `
+You are a knowledgeable NPS guide.
 
-${unstable_getSchedulePrompt({ date: new Date() })}
-
-If the user asks to schedule a task, use the schedule tool to schedule the task.
-`,
-            messages: processedMessages,
+${unstable_getSchedulePrompt({ date: new Date() })}`, // TODO: update this prompt
+            messages: processed,
             tools,
             onFinish,
-            onError: (error) => {
-              console.error("Error while streaming:", error);
-            },
+            onError: (err) => console.error("Stream error:", err),
             maxSteps: 10,
           });
-
-          // Merge the AI response stream with tool execution outputs
+          // merge AI tokens and tool outputs back to the client
           result.mergeIntoDataStream(dataStream);
         },
       });
-
-      return dataStreamResponse;
     });
   }
   async executeTask(description: string, task: Schedule<string>) {
@@ -94,15 +98,15 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/check-open-ai-key") {
-      const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
+    if (url.pathname === "/check-anthropic-key") {
+      const hasKey = !!process.env.ANTHROPIC_API_KEY;
       return Response.json({
-        success: hasOpenAIKey,
+        success: hasKey,
       });
     }
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.ANTHROPIC_API_KEY) {
       console.error(
-        "OPENAI_API_KEY is not set, don't forget to set it locally in .dev.vars, and use `wrangler secret bulk .dev.vars` to upload it to production"
+        "ANTHROPIC_API_KEY is not set, don't forget to set it locally in .dev.vars, and use `wrangler secret bulk .dev.vars` to upload it to production"
       );
     }
     return (

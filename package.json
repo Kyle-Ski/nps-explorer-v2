@@ -1,5 +1,5 @@
 {
-  "name": "cloudflare-agent-starter",
+  "name": "nps-explorer",
   "version": "1.0.0",
   "description": "",
   "type": "module",
@@ -37,7 +37,7 @@
     "wrangler": "^4.13.1"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^1.3.16",
+    "@ai-sdk/anthropic": "^1.2.10",
     "@ai-sdk/react": "^1.2.9",
     "@ai-sdk/ui-utils": "^1.2.8",
     "@phosphor-icons/react": "^2.1.7",
