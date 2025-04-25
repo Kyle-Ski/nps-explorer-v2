@@ -5,12 +5,13 @@ import { unstable_getSchedulePrompt } from "agents/schedule";
 import { AIChatAgent } from "agents/ai-chat-agent";
 import {
   createDataStreamResponse,
+  experimental_createMCPClient as createMCPClient,
   generateId,
   streamText,
   type StreamTextOnFinishCallback,
 } from "ai";
 import { processToolCalls } from "./utils";
-import { tools, executions } from "./tools";
+import { executions } from "./tools";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createAnthropic } from "@ai-sdk/anthropic";
 
@@ -46,6 +47,19 @@ export class Chat extends AIChatAgent<Env> {
   // biome-ignore lint/complexity/noBannedTypes: <explanation>
   async onChatMessage(onFinish: StreamTextOnFinishCallback<{}>) {
     return agentContext.run(this, async () => {
+
+      const mcpClient = await createMCPClient({
+        transport: {
+          type: "sse", 
+          // point this to server endpoint in the worker:
+          url: `https://nps-mcp-server.skiroyjenkins.workers.dev/mcp`,
+          headers: { Authorization: `Bearer` },
+        },
+      });
+
+      // Pull down the tool definitions from MCP server
+      const tools = await mcpClient.tools();
+
       return createDataStreamResponse({
         execute: async (dataStream) => {
           // handle any pending tool interactions first
@@ -54,6 +68,9 @@ export class Chat extends AIChatAgent<Env> {
             dataStream,
             tools,
             executions,
+            onFinish: async () => {
+              await mcpClient.close();
+            }
           });
 
           // choose your Claude model ID
@@ -111,7 +128,7 @@ export default {
     }
     return (
       // Route the request to our agent or return 404 if not found
-      (await routeAgentRequest(request, env)) ||
+      (await routeAgentRequest(request, env, { cors: true })) ||
       new Response("Not found", { status: 404 })
     );
   },

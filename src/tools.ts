@@ -41,7 +41,7 @@ const isLocalDevelopment = () => {
 const getMcpBaseUrl = () => {
   if (isLocalDevelopment()) {
     // Use local MCP server running at port 8787
-    return "http://localhost:8787/mcp";
+    return "https://nps-mcp-server.skiroyjenkins.workers.dev/mcp";
   } else {
     // Use deployed MCP server in production
     return "https://nps-mcp-server.skiroyjenkins.workers.dev/mcp";
@@ -52,8 +52,10 @@ const getMcpBaseUrl = () => {
 const mcpClient = {
   // Call a tool on the MCP server
   callTool: async (toolName: string, params: any): Promise<McpToolResponse> => {
+    const url = `${getMcpBaseUrl()}/tools/${toolName}`;
+    console.log(`Calling MCP tool at URL: ${url}`);
     try {
-      const response = await fetch(`${getMcpBaseUrl()}/tools/${toolName}`, {
+      const response = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -62,6 +64,9 @@ const mcpClient = {
       });
 
       if (!response.ok) {
+        console.error(`HTTP error! status: ${response.status}, statusText: ${response.statusText}`);
+        const responseText = await response.text();
+        console.error(`Response body: ${responseText}`);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
@@ -97,6 +102,40 @@ declare global {
     };
   }
 }
+
+// Add this to your tools.ts file to test available endpoints
+const testMcpEndpoints = tool({
+  description: "Test different MCP server endpoints",
+  parameters: z.object({}),
+  execute: async () => {
+    const baseUrl = getMcpBaseUrl();
+    const endpoints = [
+      "/",
+      "/metadata",
+      "/tools",
+      "/tools/add",
+      "/resources"
+    ];
+
+    const results = await Promise.all(endpoints.map(async (endpoint) => {
+      try {
+        const response = await fetch(`${baseUrl}${endpoint}`);
+        return {
+          endpoint,
+          status: response.status,
+          ok: response.ok
+        };
+      } catch (error: any) {
+        return {
+          endpoint,
+          error: error.message
+        };
+      }
+    }));
+
+    return JSON.stringify(results, null, 2);
+  }
+});
 
 /**
  * Weather information tool that requires human confirmation
@@ -357,7 +396,8 @@ export const tools = {
   getParkWeatherForecast,
   planParkVisit,
   findNearbyRecreation,
-  checkMcpStatus
+  checkMcpStatus,
+  testMcpEndpoints
 };
 
 /**

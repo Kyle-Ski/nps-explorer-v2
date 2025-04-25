@@ -103,7 +103,7 @@ export class NpsApiService implements INpsApiService {
 
     async getParkById(id: string): Promise<Park> {
         console.log("NPS SERVICE: async getParkById(id: string): Promise<Park> {")
-        const url = `${this.baseUrl}/parks?id=${id}&api_key=${this.apiKey}`;
+        const url = `${this.baseUrl}/parks?parkCode=${id}&api_key=${this.apiKey}`;
         const resp = await this.http.get<NpsApiResponse>(url);
         const park = resp.data[0];
         return this.mapParkResponse(park);
