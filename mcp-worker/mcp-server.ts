@@ -5,9 +5,15 @@ import { HttpClient } from "../src/lib/httpClient";
 import { NpsApiService, type Park } from "./services/npsService";
 import { RecGovService } from "./services/recGovService";
 import { WeatherApiService, type ForecastDay } from "./services/weatherService";
+import OAuthProvider from "@cloudflare/workers-oauth-provider";
+import { GitHubHandler } from "./githubHandler";
 
 export interface Env {
     NpsMcpAgent: DurableObjectNamespace;
+    OAUTH_KV: KVNamespace;
+    GITHUB_CLIENT_ID: string;
+    GITHUB_CLIENT_SECRET: string;
+    COOKIE_ENCRYPTION_KEY: string;
     NPS_API_KEY: string;
     RECGOV_API_KEY: string;
     WEATHER_API_KEY: string;
@@ -786,7 +792,13 @@ export class NpsMcpAgent extends McpAgent<Env, State> {
     }
 }
 
-// Export the mounted MCP server
-export default NpsMcpAgent.mount("/mcp", {
-    binding: "NpsMcpAgent",
-});
+export default new OAuthProvider({
+    apiRoute: "/mcp",
+    // @ts-ignore TS2322: fetch-signature mismatch
+    apiHandler: NpsMcpAgent.mount("/mcp", { binding: "NpsMcpAgent" }),
+    // @ts-ignore TS2322: fetch-signature mismatch
+    defaultHandler: GitHubHandler,
+    authorizeEndpoint: "/authorize",
+    tokenEndpoint: "/token",
+    clientRegistrationEndpoint: "/register"
+})
