@@ -1,13 +1,19 @@
 import { McpAgent } from "agents/mcp";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { HttpClient } from "../src/lib/httpClient";
+import { HttpClient } from "./utils/httpClient";
 import { NpsApiService, type Park } from "./services/npsService";
 import { RecGovService } from "./services/recGovService";
 import { WeatherApiService, type ForecastDay } from "./services/weatherService";
+import OAuthProvider from "@cloudflare/workers-oauth-provider";
+import { GitHubHandler } from "./githubHandler";
 
 export interface Env {
     NpsMcpAgent: DurableObjectNamespace;
+    OAUTH_KV: KVNamespace;
+    GITHUB_CLIENT_ID: string;
+    GITHUB_CLIENT_SECRET: string;
+    COOKIE_ENCRYPTION_KEY: string;
     NPS_API_KEY: string;
     RECGOV_API_KEY: string;
     WEATHER_API_KEY: string;
@@ -306,6 +312,343 @@ export class NpsMcpAgent extends McpAgent<Env, State> {
                     console.error("Error in getParkOverview:", error);
                     return {
                         content: [{ type: "text", text: `Error retrieving park overview: ${error.message}` }]
+                    };
+                }
+            }
+        );
+
+        // Tool to get trail information
+        this.server.tool(
+            "getTrailInfo",
+            "Get detailed information about trails in national parks including difficulty, length, elevation gain, and current conditions",
+            {
+                parkCode: z.string().describe("The park code (e.g., 'yose' for Yosemite)"),
+                trailId: z.string().optional().describe("Specific trail ID (optional)"),
+                difficulty: z.enum(["easy", "moderate", "strenuous"]).optional().describe("Filter trails by difficulty level"),
+                minLength: z.number().optional().describe("Minimum trail length in miles"),
+                maxLength: z.number().optional().describe("Maximum trail length in miles")
+            },
+            async ({ parkCode, trailId, difficulty, minLength, maxLength }) => {
+                try {
+                    // Get trails for the specified park with all the filters
+                    const trails = await recGovService.getTrailsByPark(parkCode, {
+                        trailId,
+                        difficulty,
+                        minLength,
+                        maxLength
+                    });
+
+                    if (!trails || trails.length === 0) {
+                        return {
+                            content: [{
+                                type: "text",
+                                text: `No trails found in park ${parkCode} matching your criteria.`
+                            }]
+                        };
+                    }
+
+                    // Get park info for context
+                    const park = await npsService.getParkById(parkCode);
+
+                    // Format response
+                    let response = `# Trails in ${park ? park.name : parkCode}\n\n`;
+                    response += `Found ${trails.length} trails matching your criteria:\n\n`;
+
+                    trails.forEach((trail, index) => {
+                        response += `## ${index + 1}. ${trail.name}\n`;
+
+                        if (trail.description) {
+                            response += `${trail.description}\n\n`;
+                        }
+
+                        if (trail.length) {
+                            response += `**Length:** ${trail.length} miles\n`;
+                        }
+
+                        if (trail.difficulty) {
+                            response += `**Difficulty:** ${trail.difficulty}\n`;
+                        }
+
+                        if (trail.elevationGain) {
+                            response += `**Elevation Gain:** ${trail.elevationGain} ft\n`;
+                        }
+
+                        if (trail.surfaceType) {
+                            response += `**Surface:** ${trail.surfaceType}\n`;
+                        }
+
+                        if (trail.trailUse && trail.trailUse.length > 0) {
+                            response += `**Permitted Uses:** ${trail.trailUse.join(", ")}\n`;
+                        }
+
+                        if (trail.trailhead) {
+                            response += `**Trailhead Coordinates:** ${trail.trailhead.latitude}, ${trail.trailhead.longitude}\n`;
+                        }
+
+                        response += `\n---\n\n`;
+                    });
+
+                    return {
+                        content: [{ type: "text", text: response }]
+                    };
+                } catch (error: any) {
+                    console.error("Error in getTrailInfo:", error);
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `Error retrieving trail information: ${error.message}`
+                        }]
+                    };
+                }
+            }
+        );
+
+        // Tool to find parks based on multiple criteria
+        this.server.tool(
+            "findParks",
+            "Find national parks based on criteria such as state, activities, or amenities",
+            {
+                stateCode: z.string().optional().describe("Two-letter state code (e.g., CA, NY)"),
+                activity: z.string().optional().describe("Activity to filter parks by (e.g., hiking, camping)"),
+                q: z.string().optional().describe("Free text search query"),
+                limit: z.number().optional().default(10).describe("Maximum number of results to return")
+            },
+            async ({ stateCode, activity, q, limit }) => {
+                try {
+                    let parks: Park[] = [];
+
+                    // Use existing service methods based on provided parameters
+                    if (stateCode) {
+                        parks = await npsService.getParksByState(stateCode);
+                    } else if (activity) {
+                        parks = await npsService.getParksByActivity(activity);
+                    } else if (q) {
+                        // Assuming you have or will implement a search method in NpsApiService
+                        parks = await npsService.searchParks(q);
+                    } else {
+                        // Get all parks with a reasonable limit if no criteria provided
+                        parks = await npsService.getParks(limit);
+                    }
+
+                    if (!parks || parks.length === 0) {
+                        return {
+                            content: [{
+                                type: "text",
+                                text: "No parks found matching your criteria."
+                            }]
+                        };
+                    }
+
+                    // Apply limit
+                    parks = parks.slice(0, limit);
+
+                    // Format the response
+                    let response = `# National Parks Search Results\n\nFound ${parks.length} parks matching your criteria:\n\n`;
+
+                    parks.forEach((park, index) => {
+                        response += `## ${index + 1}. ${park.name}\n`;
+                        response += `**Park Code:** ${park.parkCode}\n`;
+
+                        if (park.description) {
+                            response += `**Description:** ${park.description.substring(0, 200)}${park.description.length > 200 ? '...' : ''}\n`;
+                        }
+
+                        if (park.states) {
+                            response += `**States:** ${park.states}\n`;
+                        }
+
+                        if (park.url) {
+                            response += `**Website:** ${park.url}\n`;
+                        }
+
+                        response += '\n';
+                    });
+
+                    return {
+                        content: [{ type: "text", text: response }]
+                    };
+                } catch (error: any) {
+                    console.error("Error in findParks:", error);
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `Error finding parks: ${error.message}`
+                        }]
+                    };
+                }
+            }
+        );
+
+        // Tool to get current alerts for a park
+        this.server.tool(
+            "getParkAlerts",
+            "Get current alerts, closures, and notifications for specified national parks",
+            {
+                parkCode: z.string().describe("The park code (e.g., 'yose' for Yosemite)"),
+                limit: z.number().optional().default(10).describe("Maximum number of alerts to return"),
+                sortBy: z.enum(["date", "title", "category"]).optional().default("date").describe("How to sort the alerts")
+            },
+            async ({ parkCode, limit, sortBy }) => {
+                try {
+                    // Get alerts using existing service
+                    const alerts = await npsService.getAlertsByPark(parkCode);
+
+                    if (!alerts || alerts.length === 0) {
+                        return {
+                            content: [{
+                                type: "text",
+                                text: `No current alerts for park: ${parkCode}`
+                            }]
+                        };
+                    }
+
+                    // Get park info for context
+                    const park = await npsService.getParkById(parkCode);
+
+                    // Sort alerts
+                    let sortedAlerts = [...alerts];
+                    if (sortBy === "date") {
+                        sortedAlerts.sort((a, b) => new Date(b.lastIndexedDate).getTime() - new Date(a.lastIndexedDate).getTime());
+                    } else if (sortBy === "title") {
+                        sortedAlerts.sort((a, b) => a.title.localeCompare(b.title));
+                    } else if (sortBy === "category") {
+                        sortedAlerts.sort((a, b) => a.category.localeCompare(b.category));
+                    }
+
+                    // Apply limit
+                    sortedAlerts = sortedAlerts.slice(0, limit);
+
+                    // Format response
+                    let response = `# Current Alerts for ${park ? park.name : parkCode}\n\n`;
+
+                    if (sortedAlerts.length === 0) {
+                        response += "No current alerts.\n";
+                    } else {
+                        response += `Found ${sortedAlerts.length} alerts:\n\n`;
+
+                        sortedAlerts.forEach((alert, index) => {
+                            response += `## ${index + 1}. ${alert.title}\n`;
+                            response += `**Category:** ${alert.category}\n`;
+                            response += `**Last Updated:** ${new Date(alert.lastIndexedDate).toLocaleDateString()}\n\n`;
+                            response += `${alert.description}\n\n`;
+
+                            if (alert.url) {
+                                response += `**More Information:** ${alert.url}\n`;
+                            }
+
+                            response += `---\n\n`;
+                        });
+                    }
+
+                    return {
+                        content: [{ type: "text", text: response }]
+                    };
+                } catch (error: any) {
+                    console.error("Error in getParkAlerts:", error);
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `Error retrieving park alerts: ${error.message}`
+                        }]
+                    };
+                }
+            }
+        );
+
+        // Tool to get upcoming events at a park
+        this.server.tool(
+            "getParkEvents",
+            "Get upcoming events at national parks including ranger talks, guided hikes, and educational programs",
+            {
+                parkCode: z.string().describe("The park code (e.g., 'yose' for Yosemite)"),
+                startDate: z.string().optional().describe("Start date for event search (YYYY-MM-DD)"),
+                endDate: z.string().optional().describe("End date for event search (YYYY-MM-DD)"),
+                limit: z.number().optional().default(10).describe("Maximum number of events to return")
+            },
+            async ({ parkCode, startDate, endDate, limit }) => {
+                try {
+                    // Set default dates if not provided
+                    const today = new Date();
+                    const defaultEndDate = new Date();
+                    defaultEndDate.setDate(today.getDate() + 30); // Next 30 days
+
+                    const effectiveStartDate = startDate || today.toISOString().split('T')[0];
+                    const effectiveEndDate = endDate || defaultEndDate.toISOString().split('T')[0];
+
+                    // Get events using existing service
+                    const events = await npsService.getEventsByPark(
+                        parkCode,
+                        effectiveStartDate,
+                        effectiveEndDate
+                    );
+
+                    if (!events || events.length === 0) {
+                        return {
+                            content: [{
+                                type: "text",
+                                text: `No events found for park ${parkCode} from ${effectiveStartDate} to ${effectiveEndDate}`
+                            }]
+                        };
+                    }
+
+                    // Get park info for context
+                    const park = await npsService.getParkById(parkCode);
+
+                    // Apply limit
+                    const limitedEvents = events.slice(0, limit);
+
+                    // Format response
+                    let response = `# Upcoming Events at ${park ? park.name : parkCode}\n\n`;
+                    response += `**Date Range:** ${effectiveStartDate} to ${effectiveEndDate}\n\n`;
+
+                    if (limitedEvents.length === 0) {
+                        response += "No upcoming events found.\n";
+                    } else {
+                        response += `Found ${events.length} events${events.length > limit ? `, showing the first ${limit}` : ''}:\n\n`;
+
+                        limitedEvents.forEach((event, index) => {
+                            response += `## ${index + 1}. ${event.title}\n`;
+
+                            if (event.dateStart) {
+                                response += `**Date:** ${new Date(event.dateStart).toLocaleDateString()}`;
+
+                                if (event.times && event.times.length > 0) {
+                                    response += ` at ${event.times[0].timeStart}`;
+                                }
+
+                                response += `\n`;
+                            }
+
+                            if (event.location) {
+                                response += `**Location:** ${event.location}\n`;
+                            }
+
+                            if (event.description) {
+                                response += `\n${event.description}\n\n`;
+                            }
+
+                            if (event.feeInfo) {
+                                response += `**Fee Info:** ${event.feeInfo}\n`;
+                            }
+
+                            if (event.contactName || event.contactEmailAddress) {
+                                response += `**Contact:** ${event.contactName || ''} ${event.contactEmailAddress ? `(${event.contactEmailAddress})` : ''}\n`;
+                            }
+
+                            response += `\n---\n\n`;
+                        });
+                    }
+
+                    return {
+                        content: [{ type: "text", text: response }]
+                    };
+                } catch (error: any) {
+                    console.error("Error in getParkEvents:", error);
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `Error retrieving park events: ${error.message}`
+                        }]
                     };
                 }
             }
@@ -786,7 +1129,13 @@ export class NpsMcpAgent extends McpAgent<Env, State> {
     }
 }
 
-// Export the mounted MCP server
-export default NpsMcpAgent.mount("/mcp", {
-    binding: "NpsMcpAgent",
-});
+export default new OAuthProvider({
+    apiRoute: "/mcp",
+    // @ts-ignore TS2322: fetch-signature mismatch
+    apiHandler: NpsMcpAgent.mount("/mcp", { binding: "NpsMcpAgent" }),
+    // @ts-ignore TS2322: fetch-signature mismatch
+    defaultHandler: GitHubHandler,
+    authorizeEndpoint: "/authorize",
+    tokenEndpoint: "/token",
+    clientRegistrationEndpoint: "/register"
+})

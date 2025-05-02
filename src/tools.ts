@@ -41,7 +41,7 @@ const isLocalDevelopment = () => {
 const getMcpBaseUrl = () => {
   if (isLocalDevelopment()) {
     // Use local MCP server running at port 8787
-    return "https://nps-mcp-server.skiroyjenkins.workers.dev/mcp";
+    return "http://localhost:8787/mcp";
   } else {
     // Use deployed MCP server in production
     return "https://nps-mcp-server.skiroyjenkins.workers.dev/mcp";
