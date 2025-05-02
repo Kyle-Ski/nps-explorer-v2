@@ -1,4 +1,4 @@
-import { HttpClient } from "@/lib/httpClient";
+import { HttpClient } from "mcp-worker/utils/httpClient";
 
 export interface Park {
     id: string;

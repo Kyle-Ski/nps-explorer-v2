@@ -1,7 +1,7 @@
 import { McpAgent } from "agents/mcp";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { HttpClient } from "../src/lib/httpClient";
+import { HttpClient } from "./utils/httpClient";
 import { NpsApiService, type Park } from "./services/npsService";
 import { RecGovService } from "./services/recGovService";
 import { WeatherApiService, type ForecastDay } from "./services/weatherService";
