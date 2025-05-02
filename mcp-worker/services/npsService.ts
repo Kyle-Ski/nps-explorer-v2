@@ -35,6 +35,7 @@ export interface Alert {
     url?: string;
     parkCode: string;
     category: string;
+    lastIndexedDate: string
 }
 
 export interface Event {
@@ -46,6 +47,9 @@ export interface Event {
     dateEnd: string;
     times: Array<{ timeStart: string, timeEnd: string }>;
     parkCode: string;
+    feeInfo: string;
+    contactName: string;
+    contactEmailAddress: string;
 }
 
 export interface Campground {
@@ -84,6 +88,7 @@ export interface INpsApiService {
     getCampgroundsByPark(parkCode: string): Promise<Campground[]>;
     getVisitorCenters(parkCode: string): Promise<any[]>;
     getThingsToDo(parkCode: string): Promise<any[]>;
+    getParks(limit?: number): Promise<Park[]>;
 }
 
 export class NpsApiService implements INpsApiService {
@@ -93,6 +98,13 @@ export class NpsApiService implements INpsApiService {
         private readonly http: HttpClient,
         private readonly apiKey: string
     ) { }
+
+    async getParks(limit: number = 50): Promise<Park[]> {
+        console.log("NPS SERVICE: async getParks(limit: number = 50): Promise<Park[]> {");
+        const url = `${this.baseUrl}/parks?limit=${limit}&api_key=${this.apiKey}`;
+        const resp = await this.http.get<NpsApiResponse>(url);
+        return resp.data.map((p) => this.mapParkResponse(p));
+    }
 
     async getParksByState(stateCode: string): Promise<Park[]> {
         console.log("NPS SERVICE: async getParksByState(stateCode: string): Promise<Park[]> {")
@@ -157,7 +169,8 @@ export class NpsApiService implements INpsApiService {
             description: alert.description,
             url: alert.url,
             parkCode: alert.parkCode,
-            category: alert.category
+            category: alert.category,
+            lastIndexedDate: alert.lastIndexedDate
         }));
     }
 
@@ -183,7 +196,10 @@ export class NpsApiService implements INpsApiService {
             dateStart: event.datestart,
             dateEnd: event.dateend,
             times: event.times || [],
-            parkCode: event.parkCode
+            parkCode: event.parkCode,
+            feeInfo: event.feeInfo,
+            contactName: event.contactName,
+            contactEmailAddress: event.contactEmailAddress
         }));
     }
 
